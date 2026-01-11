@@ -1,0 +1,71 @@
+# ====================
+# macOS
+# ====================
+.DS_Store
+*.swp
+*.swo
+.AppleDouble
+.LSOverride
+
+# ====================
+# Go (denden-core)
+# ====================
+# Build binaries
+denden-core/denden
+denden-core/denden-cli
+
+# ====================
+# iOS Framework (Build Output)
+# ====================
+denden-core/ios/
+denden-core/android/
+
+# ====================
+# Flutter (denden_app)
+# ====================
+# Flutter generated files
+denden_app/.dart_tool/
+denden_app/.flutter-plugins
+denden_app/.flutter-plugins-dependencies
+denden_app/.metadata
+denden_app/build/
+
+# IDE
+denden_app/.idea/
+denden_app/*.iml
+
+# iOS
+denden_app/ios/.symlinks/
+denden_app/ios/Pods/
+denden_app/ios/Podfile.lock
+denden_app/ios/Flutter/
+denden_app/ios/DenDen.xcframework/
+denden_app/ios/Frameworks/
+
+# Android
+denden_app/android/.gradle/
+denden_app/android/local.properties
+denden_app/android/*.iml
+denden_app/android/*.hprof
+
+# Platform-specific build caches
+denden_app/linux/flutter/
+denden_app/macos/Flutter/
+denden_app/windows/flutter/
+
+# pubspec.lock (optional - some prefer to keep it)
+# denden_app/pubspec.lock
+
+# ====================
+# IDEs
+# ====================
+.vscode/
+*.iml
+.idea/
+
+# ====================
+# Logs and temp files
+# ====================
+*.log
+*.tmp
+*.hprof
