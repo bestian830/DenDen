@@ -5,6 +5,7 @@ import '../ffi/bridge.dart';
 import '../models/nostr_post.dart';
 import '../widgets/post_item.dart';
 import '../utils/global_cache.dart'; // Centralized cache
+import 'thread_screen.dart'; // Thread detail screen
 
 /// HomeFeed - displays the main post feed with pull-to-refresh
 class HomeFeed extends StatefulWidget {
@@ -137,10 +138,22 @@ class HomeFeedState extends State<HomeFeed> {
             controller: widget.scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             itemCount: _posts.length,
-            itemBuilder: (context, index) => PostItem(
-              post: _posts[index],
-              myPubkey: widget.myPubkey,
-            ),
+            itemBuilder: (context, index) {
+              final post = _posts[index];
+              return PostItem(
+                post: post,
+                myPubkey: widget.myPubkey,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ThreadScreen(
+                      rootPost: post,
+                      myPubkey: widget.myPubkey,
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
         // "Show N New Posts" banner (auto-hides after 4s)

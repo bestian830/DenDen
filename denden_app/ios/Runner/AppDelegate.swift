@@ -145,6 +145,183 @@ import DenDen
               result(FlutterError(code: "PUBLISH_METADATA_ERROR", message: error.localizedDescription, details: nil))
           }
         
+      case "ToggleLike":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let postId = args["postId"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "postId is required", details: nil))
+              return
+          }
+          
+          do {
+              // ToggleLike returns *LikeResult object
+              let likeResult = try c.toggleLike(postId)
+              // Convert to Dictionary for Flutter
+              result([
+                  "isLiked": likeResult.isLiked,
+                  "likeEventId": likeResult.likeEventID,
+                  "postId": likeResult.postID
+              ])
+          } catch {
+              result(FlutterError(code: "TOGGLE_LIKE_ERROR", message: error.localizedDescription, details: nil))
+          }
+        
+      case "IsPostLiked":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let postId = args["postId"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "postId is required", details: nil))
+              return
+          }
+          
+          let isLiked = c.isPostLiked(postId)
+          result(isLiked)
+        
+      case "GetPostStats":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let postId = args["postId"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "postId is required", details: nil))
+              return
+          }
+          
+          // Run in background to avoid blocking UI
+          DispatchQueue.global(qos: .userInitiated).async {
+              do {
+                  let stats = try c.getPostStats(postId)
+                  DispatchQueue.main.async {
+                      result([
+                          "postId": stats.postID,
+                          "likeCount": stats.likeCount,
+                          "replyCount": stats.replyCount,
+                          "isLikedByMe": stats.isLikedByMe
+                      ])
+                  }
+              } catch {
+                  DispatchQueue.main.async {
+                      result(FlutterError(code: "GET_STATS_ERROR", message: error.localizedDescription, details: nil))
+                  }
+              }
+          }
+        
+      case "ReplyPost":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let eventId = args["eventId"] as? String,
+                let content = args["content"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "eventId and content are required", details: nil))
+              return
+          }
+          
+          do {
+              try c.replyPost(eventId, content: content)
+              result(true)
+          } catch {
+              result(FlutterError(code: "REPLY_ERROR", message: error.localizedDescription, details: nil))
+          }
+        
+      case "GetPostThread":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let rootEventId = args["rootEventId"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "rootEventId is required", details: nil))
+              return
+          }
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              do {
+                  let threadResult = try c.getPostThread(rootEventId)
+                  DispatchQueue.main.async {
+                      result([
+                          "rootId": threadResult.rootID,
+                          "count": threadResult.count,
+                          "events": threadResult.json
+                      ])
+                  }
+              } catch {
+                  DispatchQueue.main.async {
+                      result(FlutterError(code: "GET_THREAD_ERROR", message: error.localizedDescription, details: nil))
+                  }
+              }
+          }
+        
+      case "GetNotifications":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          let args = call.arguments as? [String: Any]
+          let limit = args?["limit"] as? Int ?? 20
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getNotifications(limit, error: &error)
+              
+              if let error = error {
+                  DispatchQueue.main.async {
+                      result(FlutterError(code: "GET_NOTIFICATIONS_ERROR", message: error.localizedDescription, details: nil))
+                  }
+              } else {
+                  DispatchQueue.main.async {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+          }
+        
+      case "GetUserReplies":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          let limit = args["limit"] as? Int ?? 20
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserReplies(pubkey, limit: limit, error: &error)
+              
+              if let error = error {
+                  DispatchQueue.main.async {
+                      result(FlutterError(code: "GET_USER_REPLIES_ERROR", message: error.localizedDescription, details: nil))
+                  }
+              } else {
+                  DispatchQueue.main.async {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+          }
+        
       default:
         result(FlutterMethodNotImplemented)
       }

@@ -105,6 +105,90 @@ class DenDenBridge {
     }
   }
 
+  /// Toggle like state for a post
+  /// Returns a map with {isLiked: bool, likeEventId: String, postId: String}
+  /// Go manages the like state internally - Flutter doesn't need to track IDs
+  Future<Map<String, dynamic>> toggleLike(String postId) async {
+    try {
+      final result = await _methodChannel.invokeMethod('ToggleLike', {'postId': postId});
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      throw Exception('Failed to toggle like: ${e.message}');
+    }
+  }
+
+  /// Check if a post is currently liked (from Go cache)
+  Future<bool> isPostLiked(String postId) async {
+    try {
+      final bool result = await _methodChannel.invokeMethod('IsPostLiked', {'postId': postId});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to check like status: ${e.message}');
+    }
+  }
+
+  /// Deprecated: Use toggleLike instead
+  Future<void> likePost(String eventId) async {
+    await toggleLike(eventId);
+  }
+
+  /// Get post statistics (like count, reply count, etc.) from relay
+  /// Returns map with {postId, likeCount, replyCount, isLikedByMe}
+  /// Note: Uses async relay query with 3s timeout
+  Future<Map<String, dynamic>> getPostStats(String postId) async {
+    try {
+      final result = await _methodChannel.invokeMethod('GetPostStats', {'postId': postId});
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get post stats: ${e.message}');
+    }
+  }
+
+  /// Reply to a post (sends Nostr Kind 1 with 'e' tag)
+  Future<void> replyPost(String eventId, String content) async {
+    try {
+      await _methodChannel.invokeMethod('ReplyPost', {
+        'eventId': eventId,
+        'content': content,
+      });
+    } on PlatformException catch (e) {
+      throw Exception('Failed to reply to post: ${e.message}');
+    }
+  }
+
+  /// Get all comments under a root post (threaded discussion)
+  /// Returns map with {rootId, count, events: JSON string}
+  Future<Map<String, dynamic>> getPostThread(String rootEventId) async {
+    try {
+      final result = await _methodChannel.invokeMethod('GetPostThread', {'rootEventId': rootEventId});
+      return Map<String, dynamic>.from(result);
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get post thread: ${e.message}');
+    }
+  }
+
+  /// Get notifications (mentions/replies to current user)
+  /// Returns JSON string of ThreadEvent array
+  Future<String> getNotifications({int limit = 20}) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetNotifications', {'limit': limit});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get notifications: ${e.message}');
+    }
+  }
+
+  /// Get all replies authored by a user
+  /// Returns JSON string of ThreadEvent array
+  Future<String> getUserReplies(String pubkey, {int limit = 20}) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetUserReplies', {'pubkey': pubkey, 'limit': limit});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get user replies: ${e.message}');
+    }
+  }
+
   /// Stream of incoming Nostr messages
   /// Messages are JSON strings with "kind", "sender", "content", "time", "eventId",
   /// "authorName", and "avatarUrl" fields

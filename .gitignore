@@ -69,3 +69,8 @@ denden_app/windows/flutter/
 *.log
 *.tmp
 *.hprof
+
+# Ignored Documentation and Scripts
+ARCHITECTURE.md
+CODE_FLOW.md
+update_framework.sh

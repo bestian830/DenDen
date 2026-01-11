@@ -12,7 +12,14 @@ import '../utils/global_cache.dart'; // Centralized cache
 class PostItem extends StatefulWidget {
   final NostrPost post;
   final String myPubkey;
-  const PostItem({super.key, required this.post, required this.myPubkey});
+  final VoidCallback? onTap; // Click post to go to detail page
+  
+  const PostItem({
+    super.key,
+    required this.post,
+    required this.myPubkey,
+    this.onTap,
+  });
 
   @override
   State<PostItem> createState() => _PostItemState();
@@ -23,6 +30,9 @@ class _PostItemState extends State<PostItem> {
   String _avatarUrl = '';
   Timer? _retryTimer;
   int _retryCount = 0;
+  bool _isLiked = false;
+  bool _isLiking = false;
+  int _likeCount = 0; // Like count for optimistic updates
 
   // Regex for location extraction
   static final RegExp _locationRegex = RegExp(r'\n*📍\s*(\S+)\s*$');
@@ -34,6 +44,25 @@ class _PostItemState extends State<PostItem> {
         ? widget.post.sender.substring(0, 8) 
         : widget.post.sender;
     _loadProfile();
+    _loadPostStats(); // Load like count from relay
+  }
+
+  @override
+  void didUpdateWidget(PostItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset state when the post changes (ListView recycling)
+    if (oldWidget.post.eventId != widget.post.eventId) {
+      _isLiked = false;
+      _isLiking = false;
+      _likeCount = 0;
+      _displayName = widget.post.sender.length > 8 
+          ? widget.post.sender.substring(0, 8) 
+          : widget.post.sender;
+      _avatarUrl = '';
+      _retryCount = 0;
+      _loadProfile();
+      _loadPostStats();
+    }
   }
 
   @override
@@ -100,16 +129,19 @@ class _PostItemState extends State<PostItem> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          GestureDetector(
-            onTap: () => _navigateToProfile(context),
-            child: _buildAvatar(),
-          ),
+    return GestureDetector(
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: () => _navigateToProfile(context),
+              child: _buildAvatar(),
+            ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -149,7 +181,8 @@ class _PostItemState extends State<PostItem> {
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   void _navigateToProfile(BuildContext context) {
@@ -251,15 +284,113 @@ class _PostItemState extends State<PostItem> {
   }
 
   Widget _buildActions() {
-    return const Row(
+    return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Icon(Icons.chat_bubble_outline, size: 18, color: Colors.grey),
-        Icon(Icons.repeat, size: 18, color: Colors.grey),
-        Icon(Icons.favorite_border, size: 18, color: Colors.grey),
-        Icon(Icons.share_outlined, size: 18, color: Colors.grey),
+        // Comment button
+        GestureDetector(
+          onTap: () {
+            if (widget.onTap != null) {
+              widget.onTap!();
+            } else {
+              debugPrint('Reply to: ${widget.post.eventId}');
+            }
+          },
+          child: const Icon(Icons.chat_bubble_outline, size: 18, color: Colors.grey),
+        ),
+        // Repost button (placeholder)
+        const Icon(Icons.repeat, size: 18, color: Colors.grey),
+        // Like button with count
+        GestureDetector(
+          onTap: _handleLike,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _isLiking
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.pink),
+                    )
+                  : Icon(
+                      _isLiked ? Icons.favorite : Icons.favorite_border,
+                      size: 18,
+                      color: _isLiked ? Colors.pink : Colors.grey,
+                    ),
+              if (_likeCount > 0) ...[
+                const SizedBox(width: 4),
+                Text(
+                  '$_likeCount',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _isLiked ? Colors.pink : Colors.grey,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        // Share button (placeholder)
+        const Icon(Icons.share_outlined, size: 18, color: Colors.grey),
       ],
     );
+  }
+
+  Future<void> _handleLike() async {
+    if (_isLiking) return;
+    
+    // Optimistic UI update - instant feedback
+    final wasLiked = _isLiked;
+    setState(() {
+      _isLiking = true;
+      _isLiked = !wasLiked;
+      _likeCount = wasLiked ? _likeCount - 1 : _likeCount + 1;
+      if (_likeCount < 0) _likeCount = 0;
+    });
+    
+    try {
+      // Send to network in background
+      final result = await DenDenBridge().toggleLike(widget.post.eventId);
+      
+      if (mounted) {
+        setState(() {
+          _isLiked = result['isLiked'] as bool;
+          _isLiking = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Toggle like failed: $e');
+      // Revert optimistic update on error
+      if (mounted) {
+        setState(() {
+          _isLiked = wasLiked;
+          _likeCount = wasLiked ? _likeCount + 1 : _likeCount - 1;
+          if (_likeCount < 0) _likeCount = 0;
+          _isLiking = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(wasLiked ? 'Failed to cancel like' : 'Failed to like'),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Load post stats from relay (like count, is liked by me)
+  Future<void> _loadPostStats() async {
+    try {
+      final stats = await DenDenBridge().getPostStats(widget.post.eventId);
+      if (mounted) {
+        setState(() {
+          _likeCount = stats['likeCount'] as int? ?? 0;
+          _isLiked = stats['isLikedByMe'] as bool? ?? false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Load post stats failed: $e');
+    }
   }
 
   String _formatTime(DateTime time) {
