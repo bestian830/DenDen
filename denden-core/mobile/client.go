@@ -31,12 +31,23 @@ type DenDenClient struct {
 	client       *client.Client
 	callback     StringCallback
 	stopChan     chan struct{}
-	seedRelays   []string           // Seed relay pool for Ocean feature
-	connectedTo  string             // Currently connected relay
-	profileCache map[string]Profile // In-memory cache for user profiles (pubkey -> Profile)
-	cacheMutex   sync.RWMutex       // Mutex for thread-safe cache access
-	likeCache    map[string]string  // In-memory cache for likes (postId -> likeEventId)
-	likeMutex    sync.RWMutex       // Mutex for thread-safe like cache access
+	seedRelays   []string                 // Seed relay pool for Ocean feature
+	connectedTo  string                   // Currently connected relay
+	profileCache map[string]Profile       // In-memory cache for user profiles (pubkey -> Profile)
+	cacheMutex   sync.RWMutex             // Mutex for thread-safe cache access
+	likeCache    map[string]string        // In-memory cache for likes (postId -> likeEventId)
+	likeMutex    sync.RWMutex             // Mutex for thread-safe like cache access
+	chatCache    map[string][]ChatMessage // In-memory cache for chats (pubkey -> messages)
+	chatMutex    sync.RWMutex
+}
+
+// ChatMessage represents a decrypted message
+type ChatMessage struct {
+	ID        string `json:"id"`
+	Sender    string `json:"sender"`
+	Content   string `json:"content"`
+	CreatedAt int64  `json:"created_at"`
+	IsMine    bool   `json:"is_mine"`
 }
 
 // Default seed relays for Ocean (public timeline)
@@ -48,11 +59,9 @@ var defaultSeedRelays = []string{
 
 // NewDenDenClient creates a new Den Den client for mobile use
 func NewDenDenClient(storageDir string) (*DenDenClient, error) {
-	// Create identity file path
-	identityPath := filepath.Join(storageDir, "identity.json")
-
-	// Initialize the underlying client
-	c, err := client.NewClient(identityPath)
+	// Initialize core client with SQLite storage
+	dbPath := filepath.Join(storageDir, "denden.db")
+	c, err := client.NewClient(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
@@ -60,9 +69,10 @@ func NewDenDenClient(storageDir string) (*DenDenClient, error) {
 	return &DenDenClient{
 		client:       c,
 		stopChan:     make(chan struct{}),
-		seedRelays:   defaultSeedRelays,
+		seedRelays:   []string{"wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"}, // Default pool
 		profileCache: make(map[string]Profile),
 		likeCache:    make(map[string]string),
+		chatCache:    make(map[string][]ChatMessage),
 	}, nil
 }
 

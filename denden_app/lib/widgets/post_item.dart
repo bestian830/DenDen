@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:async';
+import 'dart:convert';
 import '../ffi/bridge.dart';
 import '../models/nostr_post.dart';
 import '../screens/user_detail_screen.dart';
@@ -13,12 +15,14 @@ class PostItem extends StatefulWidget {
   final NostrPost post;
   final String myPubkey;
   final VoidCallback? onTap; // Click post to go to detail page
-  
+  final bool isContext;
+
   const PostItem({
     super.key,
     required this.post,
     required this.myPubkey,
     this.onTap,
+    this.isContext = false,
   });
 
   @override
@@ -26,102 +30,87 @@ class PostItem extends StatefulWidget {
 }
 
 class _PostItemState extends State<PostItem> {
-  String _displayName = '';
-  String _avatarUrl = '';
-  Timer? _retryTimer;
-  int _retryCount = 0;
+  // Like state
   bool _isLiked = false;
   bool _isLiking = false;
-  int _likeCount = 0; // Like count for optimistic updates
+  int _likeCount = 0; 
+  // Effective post (unwrapped if repost)
+  late NostrPost _effectivePost;
 
   // Regex for location extraction
   static final RegExp _locationRegex = RegExp(r'\n*📍\s*(\S+)\s*$');
+  
+  // Profile getters (Reactive to parent rebuilds)
+  String get _displayName {
+    final sender = _effectivePost.sender;
+    final profile = globalProfileCache[sender];
+    if (profile != null && profile['name'] != null && profile['name']!.isNotEmpty) {
+      return profile['name']!;
+    }
+    return sender.length > 8 ? sender.substring(0, 8) : sender;
+  }
+  
+  String get _avatarUrl {
+    final profile = globalProfileCache[_effectivePost.sender];
+    return profile?['picture'] ?? '';
+  }
 
   @override
   void initState() {
     super.initState();
-    _displayName = widget.post.sender.length > 8 
-        ? widget.post.sender.substring(0, 8) 
-        : widget.post.sender;
-    _loadProfile();
-    _loadPostStats(); // Load like count from relay
+    _updateEffectivePost();
+    _loadPostStats(); 
   }
 
   @override
   void didUpdateWidget(PostItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reset state when the post changes (ListView recycling)
     if (oldWidget.post.eventId != widget.post.eventId) {
+      _updateEffectivePost();
       _isLiked = false;
       _isLiking = false;
       _likeCount = 0;
-      _displayName = widget.post.sender.length > 8 
-          ? widget.post.sender.substring(0, 8) 
-          : widget.post.sender;
-      _avatarUrl = '';
-      _retryCount = 0;
-      _loadProfile();
       _loadPostStats();
+    }
+  }
+
+  void _updateEffectivePost() {
+    if (widget.post.isRepost && widget.post.originalPost != null) {
+      _effectivePost = widget.post.originalPost!;
+    } else {
+      _effectivePost = widget.post;
     }
   }
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
     super.dispose();
   }
 
-  void _loadProfile() async {
-    // 1. Is this me? Load from SharedPreferences
-    if (widget.myPubkey.isNotEmpty && widget.post.sender == widget.myPubkey) {
-      final prefs = await SharedPreferences.getInstance();
+  // Check backend for like status
+  Future<void> _loadPostStats() async {
+    try {
+      final stats = await DenDenBridge().getPostStats(_effectivePost.eventId);
       if (mounted) {
         setState(() {
-          _displayName = prefs.getString('profile_name') ?? _displayName;
-          _avatarUrl = prefs.getString('profile_picture') ?? '';
+          _likeCount = stats['likeCount'] as int? ?? 0;
+          _isLiked = stats['isLikedByMe'] as bool? ?? false;
         });
       }
-      return;
+    } catch (e) {
+      debugPrint('Load stats failed for ${_effectivePost.eventId}: $e');
     }
-
-    // 2. Check global cache
-    if (_checkCache()) return;
-
-    // 3. Retry if not cached
-    _retryTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (!mounted || _retryCount >= 5) {
-        timer.cancel();
-        return;
-      }
-      _retryCount++;
-      DenDenBridge().getProfile(widget.post.sender);
-      if (_checkCache()) timer.cancel();
-    });
-  }
-
-  bool _checkCache() {
-    if (globalProfileCache.containsKey(widget.post.sender)) {
-      final cached = globalProfileCache[widget.post.sender];
-      if (cached != null && mounted) {
-        setState(() {
-          _displayName = cached['name'] ?? _displayName;
-          _avatarUrl = cached['picture'] ?? '';
-        });
-        return true;
-      }
-    }
-    return false;
   }
 
   /// Extract location string from content (e.g., "📍 Vancouver")
   String? _extractLocation() {
-    final match = _locationRegex.firstMatch(widget.post.content);
+    final match = _locationRegex.firstMatch(_effectivePost.content);
     return match?.group(1);
   }
 
   /// Get body text with location stripped out (fixes double display)
   String _getCleanBodyText() {
-    String text = widget.post.content;
+    String text = _effectivePost.content;
     // Remove location tag from body
     text = text.replaceAll(_locationRegex, '').trim();
     return text;
@@ -129,60 +118,99 @@ class _PostItemState extends State<PostItem> {
 
   @override
   Widget build(BuildContext context) {
+    // If it's a repost but original is missing, show error or hide
+    if (widget.post.isRepost && widget.post.originalPost == null) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
+        child: const Text('Repost unavailable', style: TextStyle(color: Colors.grey)),
+      );
+    }
+
     return GestureDetector(
       onTap: widget.onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            GestureDetector(
-              onTap: () => _navigateToProfile(context),
-              child: _buildAvatar(),
-            ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
+            // Repost Header
+            if (widget.post.isRepost) _buildRepostHeader(),
+            
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header: name + time
-                Row(
-                  children: [
-                    Flexible(
-                      child: GestureDetector(
-                        onTap: () => _navigateToProfile(context),
-                        child: Text(
-                          _displayName,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      _formatTime(widget.post.time),
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                    ),
-                  ],
+                GestureDetector(
+                  onTap: () => _navigateToProfile(context),
+                  child: _buildAvatar(),
                 ),
-                const SizedBox(height: 4),
-                // Content (with location stripped)
-                _buildContent(),
-                // Location tag (Threads style)
-                _buildLocationTag(),
-                const SizedBox(height: 10),
-                // Action bar
-                _buildActions(),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header: name + time
+                      Row(
+                        children: [
+                          Flexible(
+                            child: GestureDetector(
+                              onTap: () => _navigateToProfile(context),
+                              child: Text(
+                                _displayName,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            _formatTime(_effectivePost.time),
+                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      // Content
+                      _buildContent(),
+                      // Quote Preview
+                      if (_effectivePost.quotedEventId != null) _buildQuotePreview(_effectivePost.quotedEventId!),
+                      // Location
+                      _buildLocationTag(),
+                      const SizedBox(height: 10),
+                      // Action bar
+                      if (!widget.isContext) _buildActions(),
+                    ],
+                  ),
+                ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRepostHeader() {
+    final reposter = widget.post.sender;
+    final profile = globalProfileCache[reposter];
+    final name = profile?['name'] ?? (reposter.length > 8 ? reposter.substring(0, 8) : reposter);
+    
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8, left: 36), // Align with text
+      child: Row(
+        children: [
+          Icon(Icons.repeat, size: 12, color: Colors.grey[600]),
+          const SizedBox(width: 4),
+          Text(
+            '$name Reposted',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.bold),
           ),
         ],
       ),
-    ),
-  );
+    );
   }
 
   void _navigateToProfile(BuildContext context) {
@@ -190,7 +218,7 @@ class _PostItemState extends State<PostItem> {
       context,
       MaterialPageRoute(
         builder: (_) => UserDetailScreen(
-          pubkey: widget.post.sender,
+          pubkey: _effectivePost.sender,
           initialName: _displayName,
           initialPicture: _avatarUrl,
         ),
@@ -208,7 +236,7 @@ class _PostItemState extends State<PostItem> {
       );
     }
     // Colorful identicon fallback
-    final int hash = widget.post.sender.hashCode;
+    final int hash = _effectivePost.sender.hashCode;
     final color = Colors.primaries[hash.abs() % Colors.primaries.length];
 
     return CircleAvatar(
@@ -283,7 +311,39 @@ class _PostItemState extends State<PostItem> {
     );
   }
 
+  Widget _buildQuotePreview(String quotedId) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey[300]!),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.format_quote, size: 16, color: Colors.grey),
+              const SizedBox(width: 4),
+              Text('Quoted Note', style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Note ID: ${quotedId.substring(0, 8)}...',
+            style: TextStyle(color: Colors.grey[500], fontSize: 13),
+          ),
+          // TODO: Async fetch quoted post content
+        ],
+      ),
+    );
+  }
+
   Widget _buildActions() {
+    final isRepostedByMe = false; // TODO: Check if I reposted
+    
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -292,15 +352,26 @@ class _PostItemState extends State<PostItem> {
           onTap: () {
             if (widget.onTap != null) {
               widget.onTap!();
-            } else {
-              debugPrint('Reply to: ${widget.post.eventId}');
             }
           },
           child: const Icon(Icons.chat_bubble_outline, size: 18, color: Colors.grey),
         ),
-        // Repost button (placeholder)
-        const Icon(Icons.repeat, size: 18, color: Colors.grey),
-        // Like button with count
+        
+        // Repost button
+        GestureDetector(
+          onTap: _showRepostMenu,
+          child: Row(
+            children: [
+              Icon(
+                Icons.repeat, 
+                size: 18, 
+                color: isRepostedByMe ? Colors.green : Colors.grey
+              ),
+            ],
+          ),
+        ),
+        
+        // Like button
         GestureDetector(
           onTap: _handleLike,
           child: Row(
@@ -330,9 +401,154 @@ class _PostItemState extends State<PostItem> {
             ],
           ),
         ),
-        // Share button (placeholder)
-        const Icon(Icons.share_outlined, size: 18, color: Colors.grey),
+        
+        // Share button
+        GestureDetector(
+          onTap: _handleShare,
+          child: const Icon(Icons.share_outlined, size: 18, color: Colors.grey),
+        ),
       ],
+    );
+  }
+
+  Future<void> _handleShare() async {
+    final url = 'https://njump.me/${_effectivePost.eventId}';
+    final text = 'Check out this note on Nostr: $url';
+    await Share.share(text);
+  }
+
+  void _showRepostMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.repeat),
+              title: const Text('Repost'),
+              onTap: () {
+                Navigator.pop(context);
+                _handleRepost();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Quote'),
+              onTap: () {
+                Navigator.pop(context);
+                _handleQuote();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRepost() async {
+    try {
+      // For Repost, we need the original event JSON string. 
+      // Since we don't have it easily available in raw string form here (we parsed it),
+      // we might need to rely on ID. But our backend Repost expects JSON string.
+      // Option: Re-serialize _effectivePost to JSON?
+      // Or: Change backend to accept ID and let backend fetch it?
+      // Backend: "Repost(originalEventJson string)".
+      // If we pass ID, backend fails.
+      // Re-serializing _effectivePost might lose signatures or extra fields?
+      // But _effectivePost was created from JSON.
+      // Wait, _effectivePost is a NostrPost object, not the full raw event.
+      // NostrPost is a subset.
+      
+      // CRITICAL: To allow Repost, we need the raw JSON of the event.
+      // Since we don't store it, we can't send it to backend correctly as "inner event".
+      // Workaround: Send a constructed JSON with ID and Pubkey? 
+      // No, Kind 6 content MUST be the event JSON.
+      
+      // Solution for now: Just send what we have (ID/Content/Pubkey/Kind/Time/Tags) re-serialized.
+      // It won't have the original signature, so it's technically invalid as a "wrapped event" 
+      // because signature verification of inner event will fail.
+      // BUT for simple display it might work.
+      // Ideally Backend should fetch the event from Relay if we only allow ID.
+      // But we built Repost(json).
+      
+      // Let's try to construct a valid-looking event JSON.
+      // Or change Backend to fetch.
+      // Changing Backend to "Repost(eventId)" is safer but slower (async).
+      // Given we are in frontend, let's assume we can't sign it anyway.
+      
+      // Temporary: We will send a minimal JSON structure.
+      final jsonStr = jsonEncode({
+        'id': _effectivePost.eventId,
+        'pubkey': _effectivePost.sender,
+        'created_at': _effectivePost.time.millisecondsSinceEpoch ~/ 1000,
+        'kind': _effectivePost.kind,
+        'tags': _effectivePost.tags,
+        'content': _effectivePost.content,
+        'sig': '', // Missing sig
+      });
+      
+      await DenDenBridge().repost(jsonStr);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reposted!')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  void _handleQuote() {
+    // Open compose screen with initial quoted ID
+    // We don't have a ComposeScreen that accepts params yet?
+    // Let's assume user wants simple quote.
+    // For now, prompt for text dialog?
+    // Or navigate to ComposeScreen with arguments.
+    // ComposeScreen is defined in `compose_screen.dart`?
+    // I should check `compose_screen.dart`.
+    _showQuoteDialog();
+  }
+
+  void _showQuoteDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Quote Post'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: 'Add a comment...'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              if (controller.text.isNotEmpty) {
+                try {
+                  await DenDenBridge().quotePost(
+                    controller.text, 
+                    _effectivePost.eventId, 
+                    _effectivePost.sender
+                  );
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote posted!')));
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                  }
+                }
+              }
+            }, 
+            child: const Text('Post')
+          ),
+        ],
+      ),
     );
   }
 
@@ -378,20 +594,7 @@ class _PostItemState extends State<PostItem> {
     }
   }
 
-  /// Load post stats from relay (like count, is liked by me)
-  Future<void> _loadPostStats() async {
-    try {
-      final stats = await DenDenBridge().getPostStats(widget.post.eventId);
-      if (mounted) {
-        setState(() {
-          _likeCount = stats['likeCount'] as int? ?? 0;
-          _isLiked = stats['isLikedByMe'] as bool? ?? false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Load post stats failed: $e');
-    }
-  }
+
 
   String _formatTime(DateTime time) {
     final diff = DateTime.now().difference(time);

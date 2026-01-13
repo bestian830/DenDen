@@ -1,0 +1,240 @@
+package mobile
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip04"
+)
+
+// SendDirectMessage encrypts and sends a direct message (Kind 4)
+func (d *DenDenClient) SendDirectMessage(receiverPubkey, content string) error {
+	pk := d.client.GetPublicKey()
+	sk := d.client.GetPrivateKey()
+
+	sharedSecret, err := nip04.ComputeSharedSecret(receiverPubkey, sk)
+	if err != nil {
+		return fmt.Errorf("failed to compute shared secret: %w", err)
+	}
+
+	encrypted, err := nip04.Encrypt(content, sharedSecret)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt: %w", err)
+	}
+
+	evt := nostr.Event{
+		Kind:      nostr.KindEncryptedDirectMessage, // 4
+		Content:   encrypted,
+		CreatedAt: nostr.Now(),
+		Tags:      nostr.Tags{{"p", receiverPubkey}},
+		PubKey:    pk,
+	}
+	evt.Sign(sk)
+
+	relay := d.client.GetRelay()
+	if relay == nil {
+		return fmt.Errorf("no connected relay")
+	}
+
+	if err := relay.Publish(context.Background(), &evt); err != nil {
+		return fmt.Errorf("failed to publish: %w", err)
+	}
+
+	// Optimistically add to local cache
+	d.chatMutex.Lock()
+	defer d.chatMutex.Unlock()
+
+	msg := ChatMessage{
+		ID:        evt.ID,
+		Sender:    pk,
+		Content:   content,
+		CreatedAt: int64(evt.CreatedAt),
+		IsMine:    true,
+	}
+	d.chatCache[receiverPubkey] = append(d.chatCache[receiverPubkey], msg)
+	return nil
+}
+
+// Conversation helper struct
+type Conversation struct {
+	PartnerPubkey string `json:"partner_pubkey"`
+	LastMessage   string `json:"last_message"`
+	Timestamp     int64  `json:"timestamp"`
+	UnreadCount   int    `json:"unread_count"`
+}
+
+// DebugFetchMessages fetches NIP-04 messages (Kind 4) and decrypts them. Returns a debug log string.
+func (d *DenDenClient) DebugFetchMessages(limit int64) (string, error) {
+	var log string
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	relay := d.client.GetRelay()
+	if relay == nil {
+		return "No connected relay", fmt.Errorf("no connected relay")
+	}
+	log += fmt.Sprintf("Relay connected: %s\n", "yes")
+
+	pk := d.client.GetPublicKey()
+	sk := d.client.GetPrivateKey()
+	log += fmt.Sprintf("My PubKey: %s...\n", pk[:8])
+
+	// 1. Fetch Received Messages (p = me)
+	filterReceived := nostr.Filter{
+		Kinds: []int{nostr.KindEncryptedDirectMessage},
+		Tags:  nostr.TagMap{"p": []string{pk}},
+		Limit: int(limit),
+	}
+
+	log += fmt.Sprintf("Querying received messages...\n")
+	eventsReceived, err := relay.QuerySync(ctx, filterReceived)
+	if err != nil {
+		log += fmt.Sprintf("Query received error: %v\n", err)
+	} else {
+		log += fmt.Sprintf("Found %d received events\n", len(eventsReceived))
+	}
+
+	// 2. Fetch Sent Messages (authors = me)
+	filterSent := nostr.Filter{
+		Kinds:   []int{nostr.KindEncryptedDirectMessage},
+		Authors: []string{pk},
+		Limit:   int(limit),
+	}
+
+	log += fmt.Sprintf("Querying sent messages...\n")
+	eventsSent, err := relay.QuerySync(ctx, filterSent)
+	if err != nil {
+		log += fmt.Sprintf("Query sent error: %v\n", err)
+	} else {
+		log += fmt.Sprintf("Found %d sent events\n", len(eventsSent))
+	}
+
+	totalEvents := len(eventsReceived) + len(eventsSent)
+	// Merge events
+	allEvents := append(eventsReceived, eventsSent...)
+	log += fmt.Sprintf("Total events to process: %d\n", totalEvents)
+
+	d.chatMutex.Lock()
+	defer d.chatMutex.Unlock()
+
+	decryptedCount := 0
+	cachedCount := 0
+
+	for _, evt := range allEvents {
+		var partner string
+		var sharedSecret []byte
+		var err error
+		isMine := false
+
+		if evt.PubKey == pk {
+			isMine = true
+			for _, tag := range evt.Tags {
+				if len(tag) >= 2 && tag[0] == "p" {
+					partner = tag[1]
+					break
+				}
+			}
+			if partner == "" {
+				continue
+			}
+		} else {
+			partner = evt.PubKey
+		}
+
+		if partner != "" {
+			sharedSecret, err = nip04.ComputeSharedSecret(partner, sk)
+			if err != nil {
+				continue
+			}
+		} else {
+			continue
+		}
+
+		decrypted, err := nip04.Decrypt(evt.Content, sharedSecret)
+		if err != nil {
+			continue
+		}
+		decryptedCount++
+
+		// Check duplicates in cache
+		if d.chatCache[partner] != nil {
+			exists := false
+			for _, m := range d.chatCache[partner] {
+				if m.ID == evt.ID {
+					exists = true
+					break
+				}
+			}
+			if exists {
+				continue
+			}
+		}
+
+		msg := ChatMessage{
+			ID:        evt.ID,
+			Sender:    evt.PubKey,
+			Content:   decrypted,
+			CreatedAt: int64(evt.CreatedAt),
+			IsMine:    isMine,
+		}
+		d.chatCache[partner] = append(d.chatCache[partner], msg)
+		cachedCount++
+	}
+
+	// Sort messages by time for each conversation
+	for k := range d.chatCache {
+		sort.Slice(d.chatCache[k], func(i, j int) bool {
+			return d.chatCache[k][i].CreatedAt < d.chatCache[k][j].CreatedAt
+		})
+	}
+
+	log += fmt.Sprintf("Decrypted: %d, New Cached: %d\n", decryptedCount, cachedCount)
+	return log, nil
+}
+
+// GetConversationList returns a JSON list of active conversations
+func (d *DenDenClient) GetConversationList() string {
+	d.chatMutex.RLock()
+	defer d.chatMutex.RUnlock()
+
+	list := make([]Conversation, 0)
+	for partner, msgs := range d.chatCache {
+		if len(msgs) == 0 {
+			continue
+		}
+		last := msgs[len(msgs)-1]
+		list = append(list, Conversation{
+			PartnerPubkey: partner,
+			LastMessage:   last.Content,
+			Timestamp:     last.CreatedAt,
+			UnreadCount:   0,
+		})
+	}
+
+	// Sort by recent
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Timestamp > list[j].Timestamp
+	})
+
+	bytes, _ := json.Marshal(list)
+	return string(bytes)
+}
+
+// GetChatMessages returns JSON list of messages for a partner
+func (d *DenDenClient) GetChatMessages(partnerPubkey string) string {
+	d.chatMutex.RLock()
+	defer d.chatMutex.RUnlock()
+
+	msgs := d.chatCache[partnerPubkey]
+	if msgs == nil {
+		return "[]"
+	}
+
+	bytes, _ := json.Marshal(msgs)
+	return string(bytes)
+}

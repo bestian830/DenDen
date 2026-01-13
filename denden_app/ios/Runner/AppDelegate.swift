@@ -235,6 +235,55 @@ import DenDen
           } catch {
               result(FlutterError(code: "REPLY_ERROR", message: error.localizedDescription, details: nil))
           }
+
+      case "Repost":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let originalEventJson = args["originalEventJson"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "originalEventJson is required", details: nil))
+              return
+          }
+          
+          do {
+              // Note: Repost returns (string, error) in Go
+              var error: NSError?
+              let eventId = c.repost(originalEventJson, error: &error)
+              if let error = error {
+                  throw error
+              }
+              result(eventId)
+          } catch {
+              result(FlutterError(code: "REPOST_ERROR", message: error.localizedDescription, details: nil))
+          }
+
+      case "QuotePost":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let content = args["content"] as? String,
+                let quotedEventId = args["quotedEventId"] as? String,
+                let authorPubkey = args["authorPubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "content, quotedEventId and authorPubkey are required", details: nil))
+              return
+          }
+          
+          do {
+              var error: NSError?
+              let eventId = c.quotePost(content, quotedEventId: quotedEventId, authorPubkey: authorPubkey, error: &error)
+              if let error = error {
+                  throw error
+              }
+              result(eventId)
+          } catch {
+              result(FlutterError(code: "QUOTE_ERROR", message: error.localizedDescription, details: nil))
+          }
         
       case "GetPostThread":
           guard let c = self.client else {
@@ -322,6 +371,348 @@ import DenDen
           }
           }
         
+      case "fetchProfile":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              c.fetchProfile(pubkey)
+              DispatchQueue.main.async {
+                  result(nil)
+              }
+          }
+
+      case "GetFollowing":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              let json = c.getFollowing(pubkey)
+              DispatchQueue.main.async {
+                  result(json)
+              }
+          }
+
+      case "GetFollowers":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              let json = c.getFollowers(pubkey)
+              DispatchQueue.main.async {
+                  result(json)
+              }
+          }
+
+      case "Follow":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let status = c.follow(pubkey, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "FOLLOW_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(status)
+                  }
+              }
+          }
+
+      case "Unfollow":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let status = c.unfollow(pubkey, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "UNFOLLOW_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(status)
+                  }
+              }
+          }
+
+
+
+      case "GetUserFeed":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          
+          let limit = args["limit"] as? Int ?? 20
+          
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserFeed(pubkey, limit: limit, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "GET_USER_FEED_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+      case "GetUserPosts":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          let limit = args["limit"] as? Int ?? 20
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserPosts(pubkey, limit: limit, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "GET_USER_POSTS_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+      case "GetUserReplies":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          let limit = args["limit"] as? Int ?? 20
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserReplies(pubkey, limit: limit, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "GET_USER_REPLIES_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+      case "GetUserMedia":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          let limit = args["limit"] as? Int ?? 20
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserMedia(pubkey, limit: limit, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "GET_USER_MEDIA_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+      case "GetUserHighlights":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          let limit = args["limit"] as? Int ?? 20
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserHighlights(pubkey, limit: limit, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "GET_USER_HIGHLIGHTS_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+      case "GetUserReposts":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let pubkey = args["pubkey"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "pubkey is required", details: nil))
+              return
+          }
+          let limit = args["limit"] as? Int ?? 20
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getUserReposts(pubkey, limit: limit, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                      result(FlutterError(code: "GET_USER_REPOSTS_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+
+
+      case "GetSingleEvent":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+           guard let args = call.arguments as? [String: Any],
+                let eventId = args["eventId"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "eventId is required", details: nil))
+              return
+          }
+          DispatchQueue.global(qos: .userInitiated).async {
+              var error: NSError?
+              let json = c.getSingleEvent(eventId, error: &error)
+              DispatchQueue.main.async {
+                  if let error = error {
+                       // Don't error out if not found, just return empty list or handle gracefully
+                      result(FlutterError(code: "GET_EVENT_ERROR", message: error.localizedDescription, details: nil))
+                  } else {
+                      result(json ?? "[]")
+                  }
+              }
+          }
+
+      case "SendDirectMessage":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let receiver = args["receiver"] as? String,
+                let content = args["content"] as? String else {
+              result(FlutterError(code: "INVALID_ARGUMENT", message: "receiver and content required", details: nil))
+              return
+          }
+          DispatchQueue.global(qos: .userInitiated).async {
+              do {
+                  try c.sendDirectMessage(receiver, content: content)
+                  DispatchQueue.main.async {
+                      result(true)
+                  }
+              } catch {
+                  DispatchQueue.main.async {
+                      result(FlutterError(code: "SEND_DM_ERROR", message: error.localizedDescription, details: nil))
+                  }
+              }
+          }
+
+      case "FetchMessages":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          let limit = (call.arguments as? [String: Any])?["limit"] as? Int ?? 50
+          DispatchQueue.global(qos: .userInitiated).async {
+                  // Use DebugFetchMessages with Int64 limit and manual error handling
+                  var error: NSError?
+                  let logs = c.debugFetchMessages(Int64(limit), error: &error)
+                  if let err = error {
+                      DispatchQueue.main.async {
+                          print("Fetch msg error: \(err)")
+                          result(FlutterError(code: "FETCH_ERROR", message: err.localizedDescription, details: nil))
+                      }
+                      return
+                  }
+                  
+                  print("Native Logs: \(logs)")
+                  DispatchQueue.main.async {
+                      result(logs) 
+                  }
+              }
+
+      case "GetConversations":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          let json = c.getConversationList()
+          result(json)
+
+      case "GetChatMessages":
+          guard let c = self.client else {
+              result(FlutterError(code: "CLIENT_NOT_INITIALIZED", message: "Call Initialize first", details: nil))
+              return
+          }
+          guard let args = call.arguments as? [String: Any],
+                let partner = args["partner"] as? String else {
+               result(FlutterError(code: "INVALID_ARGUMENT", message: "partner pubkey required", details: nil))
+               return
+          }
+          let json = c.getChatMessages(partner)
+          result(json)
+
       default:
         result(FlutterMethodNotImplemented)
       }

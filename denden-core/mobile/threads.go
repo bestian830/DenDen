@@ -125,57 +125,6 @@ func (d *DenDenClient) GetNotifications(limit int) (string, error) {
 	}
 }
 
-// GetUserReplies retrieves all Kind 1 events authored by a user
-// Events with 'e' tag are replies, those without are root posts
-// Timeout: 5 seconds
-func (d *DenDenClient) GetUserReplies(pubkey string, limit int) (string, error) {
-	if d.client.GetRelay() == nil {
-		return "", fmt.Errorf("not connected to relay")
-	}
-
-	if limit <= 0 {
-		limit = 20
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	filters := []nostr.Filter{
-		{
-			Kinds:   []int{1},
-			Authors: []string{pubkey},
-			Limit:   limit,
-		},
-	}
-
-	eventChan, err := d.client.GetRelay().Subscribe(ctx, filters)
-	if err != nil {
-		return "", fmt.Errorf("failed to subscribe for user replies: %w", err)
-	}
-
-	var events []ThreadEvent
-
-	for {
-		select {
-		case <-ctx.Done():
-			return d.serializeEvents(events)
-
-		case event, ok := <-eventChan:
-			if !ok {
-				return d.serializeEvents(events)
-			}
-
-			if event.Kind == 1 {
-				te := d.parseThreadEvent(event)
-				// Only include events that have an 'e' tag (replies)
-				if te.RootID != "" || te.ReplyToID != "" {
-					events = append(events, te)
-				}
-			}
-		}
-	}
-}
-
 // parseThreadEvent converts a nostr.Event to ThreadEvent
 // Implements NIP-10 parsing for root and reply references
 func (d *DenDenClient) parseThreadEvent(event *nostr.Event) ThreadEvent {

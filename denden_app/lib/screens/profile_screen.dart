@@ -6,6 +6,7 @@ import 'dart:io';
 import '../ffi/bridge.dart';
 import '../utils/global_cache.dart';
 import 'dart:convert';
+import 'user_list_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String currentName;
@@ -36,6 +37,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isUploading = false;
   bool _isSaving = false;
   String _uploadingFor = ''; // 'avatar' or 'banner'
+  
+  // Social Stats
+  List<String> _followingList = [];
+  List<String> _followersList = [];
 
   @override
   void initState() {
@@ -45,6 +50,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _pictureController = TextEditingController(text: widget.currentPicture);
     _bannerController = TextEditingController(text: widget.currentBanner);
     _websiteController = TextEditingController(text: widget.currentWebsite);
+    _fetchSocialStats();
+  }
+  
+  Future<void> _fetchSocialStats() async {
+    try {
+      final bridge = DenDenBridge();
+      final identityJson = await bridge.getIdentity();
+      final pubkey = jsonDecode(identityJson)['publicKey'];
+      
+      final following = await bridge.getFollowing(pubkey);
+      final followers = await bridge.getFollowers(pubkey);
+      
+      if (mounted) {
+        setState(() {
+          _followingList = following;
+          _followersList = followers;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching profile stats: $e');
+    }
   }
 
   @override
@@ -297,6 +323,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.info_outline),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Social Stats (Clickable)
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          if (_followingList.isNotEmpty) {
+                            Navigator.push(context, MaterialPageRoute(
+                              builder: (context) => UserListScreen(title: 'Following', pubkeys: _followingList),
+                            ));
+                          }
+                        },
+                        child: Row(
+                          children: [
+                            Text('${_followingList.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 4),
+                            const Text('Following', style: TextStyle(color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      GestureDetector(
+                        onTap: () {
+                          if (_followersList.isNotEmpty) {
+                            Navigator.push(context, MaterialPageRoute(
+                              builder: (context) => UserListScreen(title: 'Followers', pubkeys: _followersList),
+                            ));
+                          }
+                        },
+                        child: Row(
+                          children: [
+                            Text('${_followersList.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 4),
+                            const Text('Followers', style: TextStyle(color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   TextField(

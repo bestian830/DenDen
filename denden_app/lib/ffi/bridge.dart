@@ -105,6 +105,43 @@ class DenDenBridge {
     }
   }
 
+  /// Repost (Kind 6)
+  /// Returns the new event ID
+  Future<String> repost(String originalEventJson) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('Repost', {'originalEventJson': originalEventJson});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to repost: ${e.message}');
+    }
+  }
+
+  /// Quote Post (Kind 1 with tags)
+  /// Returns the new event ID
+  Future<String> quotePost(String content, String quotedEventId, String authorPubkey) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('QuotePost', {
+        'content': content,
+        'quotedEventId': quotedEventId,
+        'authorPubkey': authorPubkey,
+      });
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to quote post: ${e.message}');
+    }
+  }
+
+
+
+  /// Actively fetch profile metadata from relay
+  Future<void> fetchProfile(String pubkey) async {
+    try {
+      await _methodChannel.invokeMethod('fetchProfile', {'pubkey': pubkey});
+    } on PlatformException catch (e) {
+      throw Exception('Failed to fetch profile: ${e.message}');
+    }
+  }
+
   /// Toggle like state for a post
   /// Returns a map with {isLiked: bool, likeEventId: String, postId: String}
   /// Go manages the like state internally - Flutter doesn't need to track IDs
@@ -178,14 +215,165 @@ class DenDenBridge {
     }
   }
 
-  /// Get all replies authored by a user
-  /// Returns JSON string of ThreadEvent array
-  Future<String> getUserReplies(String pubkey, {int limit = 20}) async {
+  /// Get user activity feed (posts (Kind 1) and reposts (Kind 6))
+  /// Returns JSON string of array of NostrPost-compatible maps
+  Future<String> getUserFeed(String pubkey, {int limit = 20}) async {
     try {
-      final String result = await _methodChannel.invokeMethod('GetUserReplies', {'pubkey': pubkey, 'limit': limit});
+      final String result = await _methodChannel.invokeMethod('GetUserFeed', {'pubkey': pubkey, 'limit': limit});
       return result;
     } on PlatformException catch (e) {
-      throw Exception('Failed to get user replies: ${e.message}');
+      throw Exception('Failed to get user feed: ${e.message}');
+    }
+  }
+
+  /// Get user posts (Kind 1 excluding replies + Kind 6)
+  Future<String> getUserPosts(String pubkey, {int limit = 20}) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetUserPosts', {'pubkey': pubkey, 'limit': limit});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get user posts: ${e.message}');
+    }
+  }
+
+  /// Get user replies (Kind 1 replies only)
+  /// Overrides the legacy method name, but returns enrich NostrPost list
+  Future<String> getUserRepliesWithProfile(String pubkey, {int limit = 20}) async {
+     try {
+       // We use the new backend method GetUserReplies which returns enriched events
+       final String result = await _methodChannel.invokeMethod('GetUserReplies', {'pubkey': pubkey, 'limit': limit});
+       return result;
+     } on PlatformException catch (e) {
+       throw Exception('Failed to get user replies: ${e.message}');
+     }
+  }
+
+  /// Get user media (Kind 1 with media)
+  Future<String> getUserMedia(String pubkey, {int limit = 20}) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetUserMedia', {'pubkey': pubkey, 'limit': limit});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get user media: ${e.message}');
+    }
+  }
+
+  /// Get user highlights (Kind 9802)
+  Future<String> getUserHighlights(String pubkey, {int limit = 20}) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetUserHighlights', {'pubkey': pubkey, 'limit': limit});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get user highlights: ${e.message}');
+    }
+  }
+
+  /// Get user reposts (Kind 6)
+  Future<String> getUserReposts(String pubkey, {int limit = 20}) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetUserReposts', {'pubkey': pubkey, 'limit': limit});
+      return result;
+    } on PlatformException catch (e) {
+      throw Exception('Failed to get user reposts: ${e.message}');
+    }
+  }
+
+  /// Get single event by ID
+  Future<String> getSingleEvent(String eventId) async {
+    try {
+      final String result = await _methodChannel.invokeMethod('GetSingleEvent', {'eventId': eventId});
+      return result;
+    } on PlatformException catch (e) {
+       throw Exception('Failed to get event: ${e.message}');
+    }
+  }
+
+  // --- Social Graph (Kind 3) ---
+
+  /// Get list of pubkeys that [pubkey] follows
+  Future<List<String>> getFollowing(String pubkey) async {
+    try {
+      final String jsonStr = await _methodChannel.invokeMethod('GetFollowing', {'pubkey': pubkey});
+      final List<dynamic> list = jsonDecode(jsonStr);
+      return list.cast<String>();
+    } on PlatformException catch (e) {
+      debugPrint('Failed to get following: ${e.message}');
+      return [];
+    }
+  }
+
+  /// Get list of pubkeys that follow [pubkey] (Reverse lookup)
+  Future<List<String>> getFollowers(String pubkey) async {
+    try {
+      final String jsonStr = await _methodChannel.invokeMethod('GetFollowers', {'pubkey': pubkey});
+      final List<dynamic> list = jsonDecode(jsonStr);
+      return list.cast<String>();
+    } on PlatformException catch (e) {
+      debugPrint('Failed to get followers: ${e.message}');
+      return [];
+    }
+  }
+
+  /// Follow a user (Update Kind 3)
+  Future<void> follow(String pubkeyToFollow) async {
+    try {
+      await _methodChannel.invokeMethod('Follow', {'pubkey': pubkeyToFollow});
+    } on PlatformException catch (e) {
+      throw Exception('Failed to follow: ${e.message}');
+    }
+  }
+
+  /// Unfollow a user (Update Kind 3)
+  Future<void> unfollow(String pubkeyToUnfollow) async {
+    try {
+      await _methodChannel.invokeMethod('Unfollow', {'pubkey': pubkeyToUnfollow});
+    } on PlatformException catch (e) {
+      throw Exception('Failed to unfollow: ${e.message}');
+    }
+  }
+
+  Future<bool> sendDirectMessage(String receiver, String content) async {
+    try {
+      final bool result = await _methodChannel.invokeMethod('SendDirectMessage', {'receiver': receiver, 'content': content});
+      return result;
+    } on PlatformException catch (e) {
+      print("Failed to send DM: '${e.message}'.");
+      return false;
+    }
+  }
+
+  Future<void> fetchMessages(int limit) async {
+    try {
+      final String? logs = await _methodChannel.invokeMethod('FetchMessages', {'limit': limit});
+      if (logs != null) {
+        debugPrint("========== NATIVE LOGS START ==========");
+        debugPrint(logs);
+        debugPrint("=========== NATIVE LOGS END ===========");
+      }
+    } on PlatformException catch (e) {
+      print("Failed to fetch messages: '${e.message}'.");
+    }
+  }
+
+  Future<String> getConversations() async {
+    try {
+      final Uint8List? data = await _methodChannel.invokeMethod('GetConversations');
+      if (data == null) return "[]";
+      return utf8.decode(data);
+    } catch (e) {
+      print("Failed to get conversations: '$e'.");
+      return "[]";
+    }
+  }
+
+  Future<String> getChatMessages(String partner) async {
+    try {
+      final Uint8List? data = await _methodChannel.invokeMethod('GetChatMessages', {'partner': partner});
+      if (data == null) return "[]";
+      return utf8.decode(data);
+    } catch (e) {
+      print("Failed to get chat messages: '$e'.");
+      return "[]";
     }
   }
 

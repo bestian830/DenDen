@@ -3,6 +3,9 @@ import 'package:denden_app/ffi/bridge.dart';
 import 'package:denden_app/screens/compose_screen.dart';
 import 'package:denden_app/screens/profile_screen.dart';
 import 'package:denden_app/screens/home_feed.dart';
+import 'package:denden_app/screens/chat_list_screen.dart';
+import 'package:denden_app/screens/contact_screen.dart'; // NEW
+import 'package:denden_app/screens/notification_screen.dart'; // NEW
 import 'package:denden_app/utils/global_cache.dart'; // Centralized cache
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -57,12 +60,14 @@ class _MainScreenState extends State<MainScreen> {
 
   final ScrollController _homeScrollController = ScrollController();
   final GlobalKey<HomeFeedState> _homeFeedKey = GlobalKey();
+  final GlobalKey<ChatListScreenState> _chatListKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _initializeDenDen();
   }
+  
 
   Future<void> _initializeDenDen() async {
     try {
@@ -207,7 +212,9 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: (_selectedIndex == 2 || _selectedIndex == 3)
+        ? null // Hide outer AppBar on Contacts (2) and Messages (3) tabs
+        : AppBar(
         title: GestureDetector(
           onTap: _scrollToTop,
           child: const Text('DenDen'),
@@ -282,8 +289,8 @@ class _MainScreenState extends State<MainScreen> {
             myPubkey: _publicKey,
           ),
           const Center(child: Text('Search')),
-          const Center(child: Text('Notifications')),
-          const Center(child: Text('Direct Messages')),
+          const NotificationScreen(), // Replaced Contacts with Notifications
+          ChatListScreen(key: _chatListKey),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -291,6 +298,8 @@ class _MainScreenState extends State<MainScreen> {
         onTap: (index) {
           if (index == 0 && _selectedIndex == 0) {
             _scrollToTop();
+          } else if (index == 3 && _selectedIndex == 3) {
+             _chatListKey.currentState?.refresh();
           }
           setState(() => _selectedIndex = index);
         },
@@ -302,7 +311,7 @@ class _MainScreenState extends State<MainScreen> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
-          BottomNavigationBarItem(icon: Icon(Icons.notifications_outlined), label: 'Notifs'),
+          BottomNavigationBarItem(icon: Icon(Icons.notifications_outlined), label: 'Notifs'), // Reverted Icon
           BottomNavigationBarItem(icon: Icon(Icons.mail_outline), label: 'DMs'),
         ],
       ),

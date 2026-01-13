@@ -25,7 +25,7 @@ func (d *DenDenClient) StartListening(callback StringCallback) error {
 	// Subscribe to Kind 0 (Metadata) and Kind 1 (Text Notes)
 	filters := []nostr.Filter{
 		{
-			Kinds: []int{0, 1}, // Kind 0 = Metadata, Kind 1 = Text Note
+			Kinds: []int{1, 6}, // Kind 1 = Text Note, Kind 6 = Repost
 			Limit: 20,
 		},
 	}
@@ -75,15 +75,17 @@ func (d *DenDenClient) processEvent(event *nostr.Event) {
 		// Kind 1: Text Note (public post)
 		// Enrich with cached profile data
 		profile := d.getProfileFromCache(event.PubKey)
+		tagsBytes, _ := json.Marshal(event.Tags)
 
 		messageJSON := fmt.Sprintf(
-			`{"kind":1,"sender":"%s","content":"%s","time":"%s","eventId":"%s","authorName":"%s","avatarUrl":"%s"}`,
+			`{"kind":1,"sender":"%s","content":"%s","time":"%s","eventId":"%s","authorName":"%s","avatarUrl":"%s","tags":%s}`,
 			event.PubKey,
 			escapeJSON(event.Content),
 			event.CreatedAt.Time().Format(time.RFC3339),
 			event.ID,
 			escapeJSON(profile.Name),
 			escapeJSON(profile.Picture),
+			string(tagsBytes),
 		)
 
 		if d.callback != nil {
@@ -118,6 +120,26 @@ func (d *DenDenClient) processEvent(event *nostr.Event) {
 			event.ID,
 			escapeJSON(profile.Name),
 			escapeJSON(profile.Picture),
+		)
+
+		if d.callback != nil {
+			d.callback.OnMessage(messageJSON)
+		}
+
+	case 6:
+		// Kind 6: Repost
+		profile := d.getProfileFromCache(event.PubKey)
+		tagsBytes, _ := json.Marshal(event.Tags)
+
+		messageJSON := fmt.Sprintf(
+			`{"kind":6,"sender":"%s","content":"%s","time":"%s","eventId":"%s","authorName":"%s","avatarUrl":"%s","tags":%s}`,
+			event.PubKey,
+			escapeJSON(event.Content),
+			event.CreatedAt.Time().Format(time.RFC3339),
+			event.ID,
+			escapeJSON(profile.Name),
+			escapeJSON(profile.Picture),
+			string(tagsBytes),
 		)
 
 		if d.callback != nil {

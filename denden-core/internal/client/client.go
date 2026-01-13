@@ -164,3 +164,19 @@ func (c *Client) Close() error {
 
 	return nil
 }
+
+// GetPrivateKey returns the private key (hex)
+func (c *Client) GetPrivateKey() string {
+	if c.identity == nil {
+		return ""
+	}
+	return c.identity.PrivateKey
+}
+
+// GetPublicKey returns the public key (hex)
+func (c *Client) GetPublicKey() string {
+	if c.identity == nil {
+		return ""
+	}
+	return c.identity.PublicKey
+}

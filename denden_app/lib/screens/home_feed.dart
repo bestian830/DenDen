@@ -20,6 +20,7 @@ class HomeFeed extends StatefulWidget {
 class HomeFeedState extends State<HomeFeed> {
   final List<NostrPost> _posts = [];
   final List<NostrPost> _incomingQueue = [];
+  final Set<String> _requestedProfiles = {};
   StreamSubscription<String>? _subscription;
   bool _isLoading = true;
   
@@ -66,12 +67,28 @@ class HomeFeedState extends State<HomeFeed> {
               'name': content['name'] as String? ?? pubkey.substring(0, 8),
               'picture': content['picture'] as String? ?? '',
             };
+            if (mounted) setState(() {}); // Rebuild UI with new profile
           }
         }
 
-        // Kind 1: Text note - add to feed
-        if (kind == 1) {
+        // Kind 1 or 6: Text note / Repost
+        if (kind == 1 || kind == 6) {
           final post = NostrPost.fromJson(data);
+
+          // 自动请求未知的 profile (reposter or author)
+          if (!globalProfileCache.containsKey(post.sender) && !_requestedProfiles.contains(post.sender)) {
+            _requestedProfiles.add(post.sender);
+            DenDenBridge().fetchProfile(post.sender);
+          }
+          
+          // 如果是转发，也要请求原作者的 profile
+          if (post.isRepost && post.originalPost != null) {
+            final origSender = post.originalPost!.sender;
+            if (!globalProfileCache.containsKey(origSender) && !_requestedProfiles.contains(origSender)) {
+               _requestedProfiles.add(origSender);
+               DenDenBridge().fetchProfile(origSender);
+            }
+          }
 
           if (_posts.length < 10) {
             // Initial load: add directly

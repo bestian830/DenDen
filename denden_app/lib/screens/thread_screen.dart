@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'dart:async';
 import 'package:denden_app/models/nostr_post.dart';
 import 'package:denden_app/widgets/comment_node.dart';
 import 'package:denden_app/widgets/post_item.dart';
 import 'package:denden_app/ffi/bridge.dart';
+import 'package:denden_app/utils/global_cache.dart';
 
 /// Thread screen showing a root post with all its comments
 class ThreadScreen extends StatefulWidget {
@@ -28,16 +31,44 @@ class _ThreadScreenState extends State<ThreadScreen> {
   String? _replyingToId; // Replying to post ID
   String? _replyingToName; // Replying to post name
 
+  StreamSubscription<String>? _subscription;
+  final Set<String> _requestedProfiles = {};
+
   @override
   void initState() {
     super.initState();
+    _subscribeToMessages();
     _loadThread();
   }
 
   @override
   void dispose() {
+    _subscription?.cancel();
     _replyController.dispose();
     super.dispose();
+  }
+
+  void _subscribeToMessages() {
+    _subscription = DenDenBridge().messages.listen((jsonString) {
+      if (!mounted) return;
+      try {
+        final data = json.decode(jsonString);
+        if (data['kind'] == 0) {
+          // Metadata update
+          final content = json.decode(data['content'] as String);
+          final pubkey = (data['pubkey'] ?? data['sender']) as String?;
+          if (pubkey != null) {
+            globalProfileCache[pubkey] = {
+              'name': content['name'] as String? ?? pubkey.substring(0, 8),
+              'picture': content['picture'] as String? ?? '',
+            };
+            if (mounted) setState(() {}); // Rebuild UI
+          }
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    });
   }
 
   Future<void> _loadThread() async {
@@ -50,6 +81,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
       final result = await DenDenBridge().getPostThread(widget.rootPost.eventId);
       final eventsJson = result['events'] as String? ?? '[]';
       final flatPosts = parseThreadEvents(eventsJson);
+      
+      // Request missing profiles
+      _checkAndFetchProfile(widget.rootPost.sender);
+      for (final p in flatPosts) {
+        _checkAndFetchProfile(p.sender);
+      }
+
       final tree = buildCommentTree(flatPosts, widget.rootPost.eventId);
       
       if (mounted) {
@@ -65,6 +103,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  void _checkAndFetchProfile(String pubkey) {
+    if (!globalProfileCache.containsKey(pubkey) && !_requestedProfiles.contains(pubkey)) {
+      _requestedProfiles.add(pubkey);
+      DenDenBridge().fetchProfile(pubkey);
     }
   }
 
